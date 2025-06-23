@@ -9,8 +9,8 @@ const QWEN_EMBEDDING_DIMENSION = 4096; // qwen2 embedding dimension is 4096
 // We'll default to OLLAMA_EMBEDDING_DIMENSION for now, assuming mxbai-embed-large is a common default.
 // If a user specifically sets up qwen3 for embeddings, they might need to adjust this or the config.
 
-const OPENAI_EMBEDDING_DIMENSION = 1536;
-const TOGETHER_EMBEDDING_DIMENSION = 768;
+// const OPENAI_EMBEDDING_DIMENSION = 1536; // Defined below
+// const TOGETHER_EMBEDDING_DIMENSION = 768; // Defined below
 // Renaming for clarity and to avoid conflict with the exported constant.
 const DEFAULT_OLLAMA_MXBAI_EMBED_LARGE_DIMENSION = 1024;
 const DEFAULT_OLLAMA_QWEN_DIMENSION = 4096;
@@ -21,7 +21,12 @@ const DEFAULT_OLLAMA_QWEN_DIMENSION = 4096;
 // IF YOU CHANGE THE DEFAULT EMBEDDING MODEL (e.g. OLLAMA_EMBEDDING_MODEL in .env)
 // TO ONE WITH A DIFFERENT DIMENSION, YOU MUST UPDATE THIS CONSTANT VALUE HERE TO MATCH,
 // AND THEN RE-DEPLOY YOUR CONVEX FUNCTIONS (npx convex deploy).
-export const EMBEDDING_DIMENSION: number = DEFAULT_OLLAMA_MXBAI_EMBED_LARGE_DIMENSION;
+export const EMBEDDING_DIMENSION: number = DEFAULT_OLLAMA_MXBAI_EMBED_LARGE_DIMENSION; // Defaulting to 1024
+
+// These are for runtime checks within getLLMConfig primarily.
+const OPENAI_EMBEDDING_DIMENSION_CONST = 1536;
+const TOGETHER_EMBEDDING_DIMENSION_CONST = 768;
+
 
 export function detectMismatchedLLMProvider() {
   // This function's primary role is to check for API keys if a non-Ollama provider is hinted at
@@ -34,18 +39,18 @@ export function detectMismatchedLLMProvider() {
   if (process.env.OPENAI_API_KEY && !process.env.LLM_PROVIDER) {
     // If OPENAI_API_KEY is set and no specific provider, it's likely OpenAI.
     // A runtime check in getLLMConfig will verify if schema EMBEDDING_DIMENSION is compatible.
-    if (EMBEDDING_DIMENSION !== OPENAI_EMBEDDING_DIMENSION) {
+    if (EMBEDDING_DIMENSION !== OPENAI_EMBEDDING_DIMENSION_CONST) {
       console.warn(
         `OpenAI API key found, but schema EMBEDDING_DIMENSION (${EMBEDDING_DIMENSION}) ` +
-        `does not match OpenAI's typical embedding dimension (${OPENAI_EMBEDDING_DIMENSION}). ` +
+        `does not match OpenAI's typical embedding dimension (${OPENAI_EMBEDDING_DIMENSION_CONST}). ` +
         `Ensure your vector index dimension is compatible if using OpenAI for embeddings.`
       );
     }
   } else if (process.env.TOGETHER_API_KEY && !process.env.LLM_PROVIDER) {
-    if (EMBEDDING_DIMENSION !== TOGETHER_EMBEDDING_DIMENSION) {
+    if (EMBEDDING_DIMENSION !== TOGETHER_EMBEDDING_DIMENSION_CONST) {
        console.warn(
         `Together API key found, but schema EMBEDDING_DIMENSION (${EMBEDDING_DIMENSION}) ` +
-        `does not match Together.AI's typical embedding dimension (${TOGETHER_EMBEDDING_DIMENSION}). ` +
+        `does not match Together.AI's typical embedding dimension (${TOGETHER_EMBEDDING_DIMENSION_CONST}). ` +
         `Ensure your vector index dimension is compatible if using Together.AI for embeddings.`
       );
     }
@@ -72,14 +77,14 @@ export function getLLMConfig(): LLMConfig {
   const provider = process.env.LLM_PROVIDER?.toLowerCase() || 'ollama'; // Default to ollama
 
   if (provider === 'openai' || process.env.OPENAI_API_KEY) {
-    if (EMBEDDING_DIMENSION !== OPENAI_EMBEDDING_DIMENSION && !(process.env.LLM_PROVIDER === 'openai')) {
+    if (EMBEDDING_DIMENSION !== OPENAI_EMBEDDING_DIMENSION_CONST && !(process.env.LLM_PROVIDER === 'openai')) {
       // If LLM_PROVIDER is explicitly 'openai', user is asserting this choice.
       // Otherwise, if key is present but provider not set, and dimensions mismatch, throw error.
       // This is a runtime check. The schema is already fixed.
       throw new Error(
-        `Runtime check: OpenAI is configured or API key found, but its embedding dimension (${OPENAI_EMBEDDING_DIMENSION}) ` +
+        `Runtime check: OpenAI is configured or API key found, but its embedding dimension (${OPENAI_EMBEDDING_DIMENSION_CONST}) ` +
         `does not match the schema's EMBEDDING_DIMENSION (${EMBEDDING_DIMENSION}). ` +
-        `To use OpenAI embeddings, ensure the schema's EMBEDDING_DIMENSION in llm.ts is ${OPENAI_EMBEDDING_DIMENSION} and redeploy.`
+        `To use OpenAI embeddings, ensure the schema's EMBEDDING_DIMENSION in llm.ts is ${OPENAI_EMBEDDING_DIMENSION_CONST} and redeploy.`
       );
     }
     return {
@@ -87,18 +92,18 @@ export function getLLMConfig(): LLMConfig {
       url: 'https://api.openai.com',
       chatModel: process.env.OPENAI_CHAT_MODEL ?? 'gpt-4o-mini',
       embeddingModel: process.env.OPENAI_EMBEDDING_MODEL ?? 'text-embedding-ada-002',
-      embeddingDimension: OPENAI_EMBEDDING_DIMENSION,
+      embeddingDimension: OPENAI_EMBEDDING_DIMENSION_CONST,
       stopWords: [],
       apiKey: process.env.OPENAI_API_KEY,
     };
   }
 
   if (provider === 'together' || process.env.TOGETHER_API_KEY) {
-    if (EMBEDDING_DIMENSION !== TOGETHER_EMBEDDING_DIMENSION && !(process.env.LLM_PROVIDER === 'together')) {
+    if (EMBEDDING_DIMENSION !== TOGETHER_EMBEDDING_DIMENSION_CONST && !(process.env.LLM_PROVIDER === 'together')) {
       throw new Error(
-        `Runtime check: Together.AI is configured or API key found, but its embedding dimension (${TOGETHER_EMBEDDING_DIMENSION}) ` +
+        `Runtime check: Together.AI is configured or API key found, but its embedding dimension (${TOGETHER_EMBEDDING_DIMENSION_CONST}) ` +
         `does not match the schema's EMBEDDING_DIMENSION (${EMBEDDING_DIMENSION}). ` +
-        `To use Together.AI embeddings, ensure the schema's EMBEDDING_DIMENSION in llm.ts is ${TOGETHER_EMBEDDING_DIMENSION} and redeploy.`
+        `To use Together.AI embeddings, ensure the schema's EMBEDDING_DIMENSION in llm.ts is ${TOGETHER_EMBEDDING_DIMENSION_CONST} and redeploy.`
       );
     }
     return {
@@ -107,7 +112,7 @@ export function getLLMConfig(): LLMConfig {
       chatModel: process.env.TOGETHER_CHAT_MODEL ?? 'meta-llama/Llama-3-8b-chat-hf',
       embeddingModel:
         process.env.TOGETHER_EMBEDDING_MODEL ?? 'togethercomputer/m2-bert-80M-8k-retrieval',
-      embeddingDimension: TOGETHER_EMBEDDING_DIMENSION,
+      embeddingDimension: TOGETHER_EMBEDDING_DIMENSION_CONST,
       stopWords: ['<|eot_id|>'],
       apiKey: process.env.TOGETHER_API_KEY,
     };
