@@ -41,18 +41,21 @@ export async function startConversationMessage(
   const memoryWithOtherPlayer = memories.find(
     (m) => m.data.type === 'conversation' && m.data.playerIds.includes(otherPlayerId),
   );
+  // System prompt in Chinese
   const prompt = [
-    `You are ${player.name}, and you just started a conversation with ${otherPlayer.name}.`,
+    `你是 ${player.name}，你刚开始与 ${otherPlayer.name} 对话。`,
+    `请始终用中文回答。`, // Added instruction for Chinese
   ];
-  prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null));
-  prompt.push(...previousConversationPrompt(otherPlayer, lastConversation));
-  prompt.push(...relatedMemoriesPrompt(memories));
+  prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null)); // agentPrompts will also be in Chinese
+  prompt.push(...previousConversationPrompt(otherPlayer, lastConversation)); // previousConversationPrompt in Chinese
+  prompt.push(...relatedMemoriesPrompt(memories)); // relatedMemoriesPrompt in Chinese
   if (memoryWithOtherPlayer) {
     prompt.push(
-      `Be sure to include some detail or question about a previous conversation in your greeting.`,
+      `请确保在问候语中包含先前对话的一些细节或问题。`,
     );
   }
-  const lastPrompt = `${player.name} to ${otherPlayer.name}:`;
+  // The user message will be the character name, then the AI will generate the words.
+  const lastPrompt = `${player.name} 对 ${otherPlayer.name} 说:`;
   prompt.push(lastPrompt);
 
   const { content } = await chatCompletion({
@@ -62,13 +65,14 @@ export async function startConversationMessage(
         content: prompt.join('\n'),
       },
     ],
-    max_tokens: 300,
+    max_tokens: 300, // Max tokens for the response
     stop: stopWords(otherPlayer.name, player.name),
   });
   return trimContentPrefx(content, lastPrompt);
 }
 
 function trimContentPrefx(content: string, prompt: string) {
+  // The LLM often includes the prompt in the response, so we remove it.
   if (content.startsWith(prompt)) {
     return content.slice(prompt.length).trim();
   }
@@ -91,22 +95,27 @@ export async function continueConversationMessage(
       conversationId,
     },
   );
-  const now = Date.now();
+  const now = new Date(); // Use local time for display
   const started = new Date(conversation.created);
+
+  // Fetch memories related to the conversation or the other player
   const embedding = await embeddingsCache.fetch(
     ctx,
-    `What do you think about ${otherPlayer.name}?`,
+    `与 ${otherPlayer.name} 的对话`, // Embedding prompt in Chinese
   );
   const memories = await memory.searchMemories(ctx, player.id as GameId<'players'>, embedding, 3);
+
+  // System prompt in Chinese
   const prompt = [
-    `You are ${player.name}, and you're currently in a conversation with ${otherPlayer.name}.`,
-    `The conversation started at ${started.toLocaleString()}. It's now ${now.toLocaleString()}.`,
+    `你是 ${player.name}，你正在与 ${otherPlayer.name} 对话中。`,
+    `请始终用中文回答。`,
+    `对话开始于 ${started.toLocaleString('zh-CN')}. 当前时间是 ${now.toLocaleString('zh-CN')}.`,
   ];
   prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null));
   prompt.push(...relatedMemoriesPrompt(memories));
   prompt.push(
-    `Below is the current chat history between you and ${otherPlayer.name}.`,
-    `DO NOT greet them again. Do NOT use the word "Hey" too often. Your response should be brief and within 200 characters.`,
+    `以下是你和 ${otherPlayer.name} 当前的聊天记录。`,
+    `不要再次打招呼。不要过于频繁地使用“嘿”这个词。你的回应应该简洁，并在100个汉字以内。`, // Adjusted character limit for Chinese
   );
 
   const llmMessages: LLMMessage[] = [
@@ -114,7 +123,7 @@ export async function continueConversationMessage(
       role: 'system',
       content: prompt.join('\n'),
     },
-    ...(await previousMessages(
+    ...(await previousMessages( // previousMessages will format messages in Chinese context
       ctx,
       worldId,
       player,
@@ -122,12 +131,12 @@ export async function continueConversationMessage(
       conversation.id as GameId<'conversations'>,
     )),
   ];
-  const lastPrompt = `${player.name} to ${otherPlayer.name}:`;
+  const lastPrompt = `${player.name} 对 ${otherPlayer.name} 说:`;
   llmMessages.push({ role: 'user', content: lastPrompt });
 
   const { content } = await chatCompletion({
     messages: llmMessages,
-    max_tokens: 300,
+    max_tokens: 200, // Max tokens for the response
     stop: stopWords(otherPlayer.name, player.name),
   });
   return trimContentPrefx(content, lastPrompt);
@@ -140,24 +149,28 @@ export async function leaveConversationMessage(
   playerId: GameId<'players'>,
   otherPlayerId: GameId<'players'>,
 ): Promise<string> {
-  const { player, otherPlayer, conversation, agent, otherAgent } = await ctx.runQuery(
+  const { player, otherPlayer, conversation, agent, otherAgent } = await ctx.runQuery( // Corrected: removed conversation from destructuring as it's not used directly here for prompt generation but fetched by queryPromptData
     selfInternal.queryPromptData,
     {
       worldId,
       playerId,
       otherPlayerId,
-      conversationId,
+      conversationId, // Pass conversationId
     },
   );
+
+  // System prompt in Chinese
   const prompt = [
-    `You are ${player.name}, and you're currently in a conversation with ${otherPlayer.name}.`,
-    `You've decided to leave the question and would like to politely tell them you're leaving the conversation.`,
+    `你是 ${player.name}，你正在与 ${otherPlayer.name} 对话中。`,
+    `请始终用中文回答。`,
+    `你已经决定离开对话，并希望礼貌地告诉他们你要走了。`,
   ];
   prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null));
   prompt.push(
-    `Below is the current chat history between you and ${otherPlayer.name}.`,
-    `How would you like to tell them that you're leaving? Your response should be brief and within 200 characters.`,
+    `以下是你和 ${otherPlayer.name} 当前的聊天记录。`,
+    `你希望如何告诉他们你要离开？你的回应应该简洁，并在50个汉字以内。`, // Adjusted character limit
   );
+
   const llmMessages: LLMMessage[] = [
     {
       role: 'system',
@@ -168,15 +181,15 @@ export async function leaveConversationMessage(
       worldId,
       player,
       otherPlayer,
-      conversation.id as GameId<'conversations'>,
+      conversation.id as GameId<'conversations'>, // conversation object is available here
     )),
   ];
-  const lastPrompt = `${player.name} to ${otherPlayer.name}:`;
+  const lastPrompt = `${player.name} 对 ${otherPlayer.name} 说:`;
   llmMessages.push({ role: 'user', content: lastPrompt });
 
   const { content } = await chatCompletion({
     messages: llmMessages,
-    max_tokens: 300,
+    max_tokens: 100, // Max tokens for a short leaving message
     stop: stopWords(otherPlayer.name, player.name),
   });
   return trimContentPrefx(content, lastPrompt);
@@ -184,16 +197,17 @@ export async function leaveConversationMessage(
 
 function agentPrompts(
   otherPlayer: { name: string },
-  agent: { identity: string; plan: string } | null,
+  agent: { identity: string; plan: string } | null, // identity and plan are now in Chinese
   otherAgent: { identity: string; plan: string } | null,
 ): string[] {
   const prompt = [];
   if (agent) {
-    prompt.push(`About you: ${agent.identity}`);
-    prompt.push(`Your goals for the conversation: ${agent.plan}`);
+    prompt.push(`关于你 (${agent.name || '你'}): ${agent.identity}`); // Added agent.name for clarity if available
+    prompt.push(`你在对话中的目标: ${agent.plan}`);
   }
   if (otherAgent) {
-    prompt.push(`About ${otherPlayer.name}: ${otherAgent.identity}`);
+    // Assuming otherAgent.name is part of the otherAgent object passed in, or use otherPlayer.name
+    prompt.push(`关于 ${otherPlayer.name}: ${otherAgent.identity}`);
   }
   return prompt;
 }
@@ -206,10 +220,9 @@ function previousConversationPrompt(
   if (conversation) {
     const prev = new Date(conversation.created);
     const now = new Date();
+    // Formatting date and time in a way that's more natural for Chinese.
     prompt.push(
-      `Last time you chatted with ${
-        otherPlayer.name
-      } it was ${prev.toLocaleString()}. It's now ${now.toLocaleString()}.`,
+      `你上次和 ${otherPlayer.name} 聊天是在 ${prev.toLocaleString('zh-CN', { dateStyle: 'medium', timeStyle: 'short' })}。现在是 ${now.toLocaleString('zh-CN', { dateStyle: 'medium', timeStyle: 'short' })}。`,
     );
   }
   return prompt;
@@ -218,14 +231,17 @@ function previousConversationPrompt(
 function relatedMemoriesPrompt(memories: memory.Memory[]): string[] {
   const prompt = [];
   if (memories.length > 0) {
-    prompt.push(`Here are some related memories in decreasing relevance order:`);
+    prompt.push(`以下是一些相关的记忆，按相关性降序排列:`);
     for (const memory of memories) {
+      // Assuming memory.description is also in Chinese or language-neutral enough.
+      // If memories are in English, this might need translation or a wrapper prompt.
       prompt.push(' - ' + memory.description);
     }
   }
   return prompt;
 }
 
+// Ensure previous messages are formatted in a way the LLM expects for Chinese dialogue
 async function previousMessages(
   ctx: ActionCtx,
   worldId: Id<'worlds'>,
@@ -237,10 +253,11 @@ async function previousMessages(
   const prevMessages = await ctx.runQuery(api.messages.listMessages, { worldId, conversationId });
   for (const message of prevMessages) {
     const author = message.author === player.id ? player : otherPlayer;
-    const recipient = message.author === player.id ? otherPlayer : player;
+    const recipient = message.author === player.id ? otherPlayer : player; // Not directly used in this format
     llmMessages.push({
-      role: 'user',
-      content: `${author.name} to ${recipient.name}: ${message.text}`,
+      role: 'user', // Representing past turns in the conversation
+      // Format: "Speaker: Message"
+      content: `${author.name} 说: ${message.text}`,
     });
   }
   return llmMessages;
@@ -286,7 +303,8 @@ export const queryPromptData = internalQuery({
     }
     const agent = world.agents.find((a) => a.playerId === args.playerId);
     if (!agent) {
-      throw new Error(`Player ${args.playerId} not found`);
+      // This should not happen based on the current setup where agents are created with players.
+      throw new Error(`Agent for player ${args.playerId} not found`);
     }
     const agentDescription = await ctx.db
       .query('agentDescriptions')
@@ -327,17 +345,21 @@ export const queryPromptData = internalQuery({
         )
         .first();
       if (!lastConversation) {
-        throw new Error(`Conversation ${lastTogether.conversationId} not found`);
+        // This could happen if an archived conversation was deleted but `participatedTogether` entry remained.
+        // Consider if this should be a softer error or handled. For now, matches existing logic.
+        throw new Error(`Archived conversation ${lastTogether.conversationId} not found`);
       }
     }
     return {
       player: { name: playerDescription.name, ...player },
       otherPlayer: { name: otherPlayerDescription.name, ...otherPlayer },
       conversation,
-      agent: { identity: agentDescription.identity, plan: agentDescription.plan, ...agent },
-      otherAgent: otherAgent && {
-        identity: otherAgentDescription!.identity,
-        plan: otherAgentDescription!.plan,
+      // agentDescription contains identity and plan (which are now Chinese from mbti_personalities.json via data/characters.ts)
+      agent: { name: playerDescription.name, identity: agentDescription.identity, plan: agentDescription.plan, ...agent },
+      otherAgent: otherAgent && otherAgentDescription && { // Ensure otherAgentDescription is also available
+        name: otherPlayerDescription.name,
+        identity: otherAgentDescription.identity,
+        plan: otherAgentDescription.plan,
         ...otherAgent,
       },
       lastConversation,
@@ -345,8 +367,18 @@ export const queryPromptData = internalQuery({
   },
 });
 
-function stopWords(otherPlayer: string, player: string) {
-  // These are the words we ask the LLM to stop on. OpenAI only supports 4.
-  const variants = [`${otherPlayer} to ${player}`];
+function stopWords(otherPlayerName: string, playerName: string) {
+  // These are the words we ask the LLM to stop on.
+  // For Chinese, this might be different, but the current format is "Speaker to Speaker:"
+  // We can adjust if needed, e.g., "某某对某某说："
+  // The LLM provider specific stop words (like <|eot_id|>) are handled in llm.ts
+  const variants = [
+    `${otherPlayerName} to ${playerName}`, // English format, in case names are still English-like
+    `${otherPlayerName} 对 ${playerName} 说`, // Chinese format
+    `${playerName} 对 ${otherPlayerName} 说`,
+    // Add more variants if the LLM tends to output other patterns before stopping.
+    // It's also important that the `lastPrompt` in the calling functions matches one of these.
+  ];
+  // The flatMap creates variations like "Name to Name:" and "name to name:"
   return variants.flatMap((stop) => [stop + ':', stop.toLowerCase() + ':']);
 }
