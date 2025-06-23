@@ -8,14 +8,26 @@ const QWEN_EMBEDDING_DIMENSION = 4096; // qwen2 embedding dimension is 4096
 // Set the default embedding dimension to be compatible with qwen or allow override.
 // We'll default to OLLAMA_EMBEDDING_DIMENSION for now, assuming mxbai-embed-large is a common default.
 // If a user specifically sets up qwen3 for embeddings, they might need to adjust this or the config.
-export const EMBEDDING_DIMENSION: number = Number(process.env.EMBEDDING_DIMENSION || OLLAMA_EMBEDDING_DIMENSION);
+
+// Store the resolved dimension to avoid re-evaluating process.env repeatedly.
+let _embeddingDimension: number | null = null;
+
+function getEmbeddingDimension(): number {
+  if (_embeddingDimension === null) {
+    _embeddingDimension = Number(process.env.EMBEDDING_DIMENSION || OLLAMA_EMBEDDING_DIMENSION);
+  }
+  return _embeddingDimension;
+}
+// REMOVED export const EMBEDDING_DIMENSION = getEmbeddingDimension();
+// Functions needing this value will call getEmbeddingDimension() directly.
 
 export function detectMismatchedLLMProvider() {
   // This function might need adjustments if we strictly tie embedding dimensions to providers
   // For now, it primarily checks for API keys based on some common dimensions.
   // Given Ollama can serve various models, a direct dimension check for Ollama itself is less critical
   // than ensuring the selected Ollama embedding model matches this dimension.
-  switch (EMBEDDING_DIMENSION) {
+  const currentEmbeddingDimension = getEmbeddingDimension();
+  switch (currentEmbeddingDimension) {
     case OPENAI_EMBEDDING_DIMENSION:
       if (!process.env.OPENAI_API_KEY) {
         throw new Error(
@@ -43,7 +55,7 @@ export function detectMismatchedLLMProvider() {
       // This case handles custom LLM providers or other non-standard dimensions.
       if (!process.env.LLM_API_URL) {
         console.warn( // Changed to a warning as Ollama might not always have LLM_API_URL set in envs
-          "Using a custom EMBEDDING_DIMENSION. If you're not using Ollama or a known provider, ensure LLM_API_URL is set for custom cloud-hosted LLMs.",
+          `Using a custom EMBEDDING_DIMENSION (${currentEmbeddingDimension}). If you're not using Ollama or a known provider, ensure LLM_API_URL is set for custom cloud-hosted LLMs.`,
         );
       }
       break;
@@ -62,11 +74,12 @@ export interface LLMConfig {
 
 export function getLLMConfig(): LLMConfig {
   const provider = process.env.LLM_PROVIDER?.toLowerCase() || 'ollama'; // Default to ollama
+  const currentEmbeddingDimension = getEmbeddingDimension();
 
   if (provider === 'openai' || process.env.OPENAI_API_KEY) {
-    if (EMBEDDING_DIMENSION !== OPENAI_EMBEDDING_DIMENSION && !process.env.EMBEDDING_DIMENSION) {
+    if (currentEmbeddingDimension !== OPENAI_EMBEDDING_DIMENSION && !process.env.EMBEDDING_DIMENSION) {
       // Only throw error if EMBEDDING_DIMENSION is not explicitly set by user for OpenAI
-      throw new Error('EMBEDDING_DIMENSION must be 1536 for OpenAI, unless overridden via environment variables.');
+      throw new Error(`EMBEDDING_DIMENSION must be ${OPENAI_EMBEDDING_DIMENSION} for OpenAI, unless overridden via environment variables. Currently: ${currentEmbeddingDimension}`);
     }
     return {
       provider: 'openai',
@@ -79,9 +92,9 @@ export function getLLMConfig(): LLMConfig {
     };
   }
   if (provider === 'together' || process.env.TOGETHER_API_KEY) {
-    if (EMBEDDING_DIMENSION !== TOGETHER_EMBEDDING_DIMENSION && !process.env.EMBEDDING_DIMENSION) {
+    if (currentEmbeddingDimension !== TOGETHER_EMBEDDING_DIMENSION && !process.env.EMBEDDING_DIMENSION) {
       // Only throw error if EMBEDDING_DIMENSION is not explicitly set by user for Together
-      throw new Error('EMBEDDING_DIMENSION must be 768 for Together.ai, unless overridden via environment variables.');
+      throw new Error(`EMBEDDING_DIMENSION (currently ${currentEmbeddingDimension}) must be ${TOGETHER_EMBEDDING_DIMENSION} for Together.ai, unless overridden via environment variables.`);
     }
     return {
       provider: 'together',
@@ -107,8 +120,8 @@ export function getLLMConfig(): LLMConfig {
       url,
       chatModel,
       embeddingModel,
-      // For custom, EMBEDDING_DIMENSION should be set in env if not standard
-      embeddingDimension: EMBEDDING_DIMENSION,
+      // For custom, currentEmbeddingDimension should be set in env if not standard
+      embeddingDimension: currentEmbeddingDimension,
       stopWords: [],
       apiKey,
     };
@@ -117,14 +130,43 @@ export function getLLMConfig(): LLMConfig {
   // Default to Ollama
   // For qwen3, embedding dimension is 4096. We use mxbai-embed-large (1024) as default embedding.
   // The user can override OLLAMA_EMBEDDING_MODEL and potentially EMBEDDING_DIMENSION.
-  let ollamaEmbeddingDimension = OLLAMA_EMBEDDING_DIMENSION;
+  let ollamaEmbeddingDimension = OLLAMA_EMBEDDING_DIMENSION; // Default for mxbai-embed-large
   if (process.env.OLLAMA_EMBEDDING_MODEL?.includes('qwen')) {
     ollamaEmbeddingDimension = QWEN_EMBEDDING_DIMENSION;
+  } else if (process.env.OLLAMA_EMBEDDING_MODEL?.includes('llama3')) {
+    // Example: if llama3 is used for embeddings and has a different dimension
+    // ollamaEmbeddingDimension = 4096; // Or whatever llama3's dimension is
   }
-  // If global EMBEDDING_DIMENSION is set and different from our derived one, warn or error.
-  // For simplicity, we'll use the derived one for this config.
-  if (EMBEDDING_DIMENSION !== ollamaEmbeddingDimension && process.env.EMBEDDING_DIMENSION) {
-     console.warn(`Global EMBEDDING_DIMENSION (${EMBEDDING_DIMENSION}) differs from Ollama's derived embedding dimension (${ollamaEmbeddingDimension}) for model ${process.env.OLLAMA_EMBEDDING_MODEL || 'mxbai-embed-large'}. Using ${ollamaEmbeddingDimension} for this Ollama config.`);
+
+
+  // If global EMBEDDING_DIMENSION (from env var) is set and different from our derived one for ollama,
+  // it indicates a specific user choice that might override the model-name based heuristic.
+  // The currentEmbeddingDimension already reflects this choice.
+  // We should ensure the config uses the resolved currentEmbeddingDimension if it's meant to be the global override.
+  // However, for Ollama, the specific model's dimension is often key.
+  // Let's prioritize the model-specific dimension for Ollama's config,
+  // but ensure it's consistent with the globally set/default currentEmbeddingDimension if no specific model heuristic applies.
+
+  // If currentEmbeddingDimension (from env or global default) is different from the
+  // Ollama model-specific heuristic (ollamaEmbeddingDimension), it might be an intentional override.
+  // Let's refine this: the `embeddingDimension` in the returned config should be what that provider/model actually uses.
+  // The global `getEmbeddingDimension()` is for general reference or for providers where it's fixed (OpenAI/Together).
+
+  let determinedOllamaDimForConfig = OLLAMA_EMBEDDING_DIMENSION; // Fallback to default Ollama
+  if (process.env.OLLAMA_EMBEDDING_MODEL?.includes('qwen')) {
+    determinedOllamaDimForConfig = QWEN_EMBEDDING_DIMENSION;
+  }
+  // if other ollama models have specific dimensions, add heuristics here.
+
+  // If EMBEDDING_DIMENSION is set via environment variable, it overrides any heuristic for Ollama.
+  if (process.env.EMBEDDING_DIMENSION) {
+    if (currentEmbeddingDimension !== determinedOllamaDimForConfig) {
+      console.warn(
+        `Environment variable EMBEDDING_DIMENSION (${currentEmbeddingDimension}) overrides model-specific heuristic dimension (${determinedOllamaDimForConfig}) for Ollama model ${process.env.OLLAMA_EMBEDDING_MODEL || 'default'}. ` +
+        `Using ${currentEmbeddingDimension} for Ollama configuration.`
+      );
+    }
+    determinedOllamaDimForConfig = currentEmbeddingDimension;
   }
 
 
@@ -133,7 +175,7 @@ export function getLLMConfig(): LLMConfig {
     url: process.env.OLLAMA_HOST ?? 'http://127.0.0.1:11434',
     chatModel: process.env.OLLAMA_MODEL ?? 'qwen3', // Changed default chat model
     embeddingModel: process.env.OLLAMA_EMBEDDING_MODEL ?? 'mxbai-embed-large', // Default embedding model
-    embeddingDimension: ollamaEmbeddingDimension,
+    embeddingDimension: determinedOllamaDimForConfig, // Use the determined dimension for Ollama
     stopWords: ['<|eot_id|>', '<|im_end|>', '<|im_start|>'], // Added qwen3 stop words
     apiKey: undefined,
   };
