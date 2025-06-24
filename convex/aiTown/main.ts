@@ -6,16 +6,20 @@ import { internal } from '../_generated/api';
 import { sleep } from '../util/sleep';
 import { Id } from '../_generated/dataModel';
 import { ENGINE_ACTION_DURATION } from '../constants';
+import { internalMutation } from '../_generated/server'; // Added internalMutation
 
-export async function createEngine(ctx: MutationCtx) {
-  const now = Date.now();
-  const engineId = await ctx.db.insert('engines', {
-    currentTime: now,
-    generationNumber: 0,
-    running: true,
-  });
-  return engineId;
-}
+// Changed from an async function to an internal mutation
+export const createEngine = internalMutation({
+  handler: async (ctx: MutationCtx) => {
+    const now = Date.now();
+    const engineId = await ctx.db.insert('engines', {
+      currentTime: now,
+      generationNumber: 0,
+      running: true,
+    });
+    return engineId;
+  },
+});
 
 async function loadWorldStatus(db: DatabaseReader, worldId: Id<'worlds'>) {
   const worldStatus = await db
