@@ -1,154 +1,109 @@
 import { v } from 'convex/values';
-import { internal, api } from './_generated/api'; // Added api
-import { DatabaseReader, MutationCtx, mutation } from './_generated/server';
+import { internal, api } from './_generated/api'; // api might be needed if calling public actions like scenarios
+import { ActionCtx, action } from './_generated/server'; // Correctly import action and ActionCtx
 import { Descriptions } from './data_internal/characters';
-import * as mapData from './data_internal/mapData';
-// insertInput is not directly used by init anymore if we call the scenario action
-// import { insertInput } from './aiTown/insertInput';
-import { Id } from './_generated/dataModel';
-// createEngine is called within getOrCreateDefaultWorld, ensure it's correctly an internalMutation or callable
-import { createEngine } from './aiTown/main';
-import { ENGINE_ACTION_DURATION } from './constants';
 import { detectMismatchedLLMProvider } from './util/llm';
+// Removed DatabaseReader, MutationCtx, mutation, mapData, Id, createEngine, ENGINE_ACTION_DURATION
+// as their primary logic is now in initInternal.ts or not directly used by this action's top level.
 
-const init = mutation({
+const init = action({ // DEFINED AS ACTION
   args: {
     mode: v.optional(v.union(v.literal('default'), v.literal('randomN'))),
     numRandomCharacters: v.optional(v.number()),
-    // Kept for backward compatibility or direct specification, though `mode` is preferred.
-    // If `numAgents` is provided and `mode` is not 'randomN', it could imply creating all available agents up to `numAgents`.
-    // For now, focusing on `mode` and `numRandomCharacters`.
     numAgents: v.optional(v.number()),
   },
-  handler: async (ctx, args: {
+  handler: async (ctx: ActionCtx, args: {
     mode?: 'default' | 'randomN',
     numRandomCharacters?: number,
     numAgents?: number
   }) => {
     detectMismatchedLLMProvider();
-    const { worldStatus, engine } = await getOrCreateDefaultWorld(ctx);
-    if (worldStatus.status !== 'running') {
-      console.warn(
-        `Engine ${engine._id} is not active! Run "npx convex run testing:resume" to restart it.`,
-      );
-      return;
+
+    // Step 1: Get or create the default world status, engine, etc.
+    // This calls an internalMutation that encapsulates all DB write operations.
+    const worldSetupResult = await ctx.runMutation(internal.initInternal.setupDefaultWorld, {});
+
+    if (!worldSetupResult) {
+        console.error("init: Failed to setup or retrieve default world. Critical error in setupDefaultWorld mutation.");
+        throw new Error("Critical error: Default world setup failed.");
     }
-    const shouldCreate = await shouldCreateAgents(
-      ctx.db,
-      worldStatus.worldId,
-      worldStatus.engineId,
-    );
+
+    const { worldId, engineId, engineIsRunning } = worldSetupResult;
+
+    if (!engineIsRunning) {
+      console.warn(
+        `Engine ${engineId} for default world ${worldId} is not active. ` +
+        `It might have been newly created (and runStep is scheduled) or was previously stopped. `
+      );
+    }
+
+    // Step 2: Determine if agents should be created for this world using an internalQuery.
+    const shouldCreate = await ctx.runQuery(internal.initInternal.queryShouldCreateAgents, {
+      worldId,
+      engineId,
+    });
 
     if (shouldCreate) {
-      let scenarioArgs: any = {};
+      let charactersToCreateInDefaultWorld: string[];
+
       if (args.mode === 'randomN' && args.numRandomCharacters !== undefined && args.numRandomCharacters > 0) {
-        scenarioArgs = { numRandomCharacters: args.numRandomCharacters };
-        console.log(`init: Creating world with ${args.numRandomCharacters} random characters.`);
+        const allPossibleCharacterNames = Descriptions.map(d => d.name); // Descriptions is available from import
+        if (args.numRandomCharacters > allPossibleCharacterNames.length) {
+            throw new Error(`Cannot select ${args.numRandomCharacters} unique characters from a pool of ${allPossibleCharacterNames.length}. Max is ${allPossibleCharacterNames.length}.`);
+        }
+        charactersToCreateInDefaultWorld = [...allPossibleCharacterNames].sort(() => 0.5 - Math.random()).slice(0, args.numRandomCharacters);
+        console.log(`init: Will create ${args.numRandomCharacters} random characters in the default world ${worldId}.`);
+
       } else if (args.mode === 'default') {
-        scenarioArgs = { characterNames: ["INTP", "ENFP", "ISFP", "INTJ"] }; // Explicitly pass default names
-        console.log(`init: Creating world with default characters (INTP, ENFP, ISFP, INTJ).`);
-      } else if (args.numAgents !== undefined) {
-        // Legacy or direct numAgents handling: create specific number of agents from the start of Descriptions list.
-        // This part can be refined or removed if `mode` covers all cases.
-        // For now, let's make it call the scenario with a slice of Descriptions.
-        const characterNames = Descriptions.slice(0, args.numAgents).map(d => d.name);
-        scenarioArgs = { characterNames };
-        console.log(`init: Creating world with first ${args.numAgents} characters from Descriptions list.`);
-      }
-      else { // Default behavior if no mode or relevant args specified
-        scenarioArgs = { characterNames: ["INTP", "ENFP", "ISFP", "INTJ"] }; // Default to specific 4
-        console.log(`init: Defaulting to create world with specific characters (INTP, ENFP, ISFP, INTJ).`);
+        charactersToCreateInDefaultWorld = ["INTP", "ENFP", "ISFP", "INTJ"];
+        const allNames = Descriptions.map(d => d.name);
+        charactersToCreateInDefaultWorld = charactersToCreateInDefaultWorld.filter(name => {
+            if (!allNames.includes(name)) {
+                console.warn(`init: Default character "${name}" not found in current Descriptions. Skipping it.`);
+                return false;
+            }
+            return true;
+        });
+        console.log(`init: Will create default characters (${charactersToCreateInDefaultWorld.join(', ')}) in the default world ${worldId}.`);
+
+      } else if (args.numAgents !== undefined && args.numAgents >= 0) {
+        charactersToCreateInDefaultWorld = Descriptions.slice(0, args.numAgents).map(d => d.name);
+        console.log(`init: Will create first ${args.numAgents} characters from Descriptions in the default world ${worldId}.`);
+
+      } else {
+        charactersToCreateInDefaultWorld = ["INTP", "ENFP", "ISFP", "INTJ"];
+        const allNames = Descriptions.map(d => d.name);
+        charactersToCreateInDefaultWorld = charactersToCreateInDefaultWorld.filter(name => {
+            if (!allNames.includes(name)) {
+                console.warn(`init: Default character "${name}" not found in current Descriptions. Skipping it.`);
+                return false;
+            }
+            return true;
+        });
+        console.log(`init: Defaulting to create specific characters (${charactersToCreateInDefaultWorld.join(', ')}) in the default world ${worldId}.`);
       }
 
-      // Ensure that if characterNames is empty (e.g. numAgents was 0), we pass undefined or handle it.
-      // The scenario action handles empty characterNames by using its own defaults.
-      if (scenarioArgs.characterNames && scenarioArgs.characterNames.length === 0 && !scenarioArgs.numRandomCharacters) {
-         console.log("init: No specific characters to create based on numAgents, scenario will use its defaults.");
-         scenarioArgs = {}; // Let scenario action use its internal default
+      if (charactersToCreateInDefaultWorld.length > 0) {
+        for (const characterName of charactersToCreateInDefaultWorld) {
+            const descriptionIndex = Descriptions.findIndex(desc => desc.name === characterName);
+            if (descriptionIndex === -1) {
+                console.warn(`init: Character description for "${characterName}" unexpectedly not found during agent queuing. Skipping.`);
+                continue;
+            }
+            // This directly calls the mutation to add agent inputs to the *default* world.
+            await ctx.runMutation(internal.scenarios.internalInsertAgentInputMutation, {
+                worldId: worldId,
+                descriptionIndex: descriptionIndex,
+            });
+        }
+        console.log(`init: Queued ${charactersToCreateInDefaultWorld.length} agents for creation in default world ${worldId}.`);
+      } else {
+        console.log(`init: No characters specified or valid to create in the default world ${worldId}.`);
       }
 
-
-      await ctx.runAction(api.scenarios.createWorldFromScenario, scenarioArgs);
     } else {
-      console.log("init: No new agents needed based on shouldCreateAgents check.");
+      console.log(`init: No new agents needed for default world ${worldId} based on queryShouldCreateAgents check.`);
     }
   },
 });
 export default init;
-
-async function getOrCreateDefaultWorld(ctx: MutationCtx) {
-  const now = Date.now();
-
-  let worldStatus = await ctx.db
-    .query('worldStatus')
-    .filter((q) => q.eq(q.field('isDefault'), true))
-    .unique();
-  if (worldStatus) {
-    const engine = (await ctx.db.get(worldStatus.engineId))!;
-    return { worldStatus, engine };
-  }
-
-  // createEngine is now an internalMutation, called via internal.aiTown.main.createEngine
-  const engineId = await ctx.runMutation(internal.aiTown.main.createEngine, {});
-  const engine = (await ctx.db.get(engineId))!;
-  if (!engine) {
-    throw new Error(`Failed to create or get engine ${engineId}`);
-  }
-  const worldId = await ctx.db.insert('worlds', {
-    nextId: 0, // This field's usage should be reviewed; typically IDs are managed by Convex.
-    agents: [],
-    conversations: [],
-    players: [],
-  });
-  const worldStatusId = await ctx.db.insert('worldStatus', {
-    engineId: engineId,
-    isDefault: true,
-    lastViewed: now,
-    status: 'running',
-    worldId: worldId,
-  });
-  worldStatus = (await ctx.db.get(worldStatusId))!;
-  await ctx.db.insert('maps', {
-    worldId,
-    width: mapData.mapwidth,
-    height: mapData.mapheight,
-    tileSetUrl: mapData.tilesetpath,
-    tileSetDimX: mapData.tilesetpxw,
-    tileSetDimY: mapData.tilesetpxh,
-    tileDim: mapData.tiledim,
-    bgTiles: mapData.bgtiles,
-    objectTiles: mapData.objmap,
-    animatedSprites: mapData.animatedsprites,
-  });
-  await ctx.scheduler.runAfter(0, internal.aiTown.main.runStep, {
-    worldId,
-    generationNumber: engine.generationNumber,
-    maxDuration: ENGINE_ACTION_DURATION,
-  });
-  return { worldStatus, engine };
-}
-
-async function shouldCreateAgents(
-  db: DatabaseReader,
-  worldId: Id<'worlds'>,
-  engineId: Id<'engines'>,
-) {
-  const world = await db.get(worldId);
-  if (!world) {
-    throw new Error(`Invalid world ID: ${worldId}`);
-  }
-  if (world.agents.length > 0) {
-    return false;
-  }
-  const unactionedJoinInputs = await db
-    .query('inputs')
-    .withIndex('byInputNumber', (q) => q.eq('engineId', engineId))
-    .order('asc')
-    .filter((q) => q.eq(q.field('name'), 'createAgent'))
-    .filter((q) => q.eq(q.field('returnValue'), undefined))
-    .collect();
-  if (unactionedJoinInputs.length > 0) {
-    return false;
-  }
-  return true;
-}
