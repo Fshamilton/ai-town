@@ -171,33 +171,51 @@ export const internalInsertAgentInputMutation = internalMutation({
 export const createWorldFromScenario = action({
   args: {
     characterNames: v.optional(v.array(v.string())),
+    numRandomCharacters: v.optional(v.number()),
   },
-  handler: async (ctx: ActionCtx, args: { characterNames?: string[] }) => {
+  handler: async (ctx: ActionCtx, args: { characterNames?: string[], numRandomCharacters?: number }) => {
     let selectedCharacterNames: string[];
+    const allPossibleCharacterNames = Descriptions.map(d => d.name);
 
     if (args.characterNames && args.characterNames.length > 0) {
-      const allValidNames = Descriptions.map(d => d.name);
+      // Validate provided character names
       for (const name of args.characterNames) {
-        if (!allValidNames.includes(name)) {
-          throw new Error(`Invalid character name provided: "${name}". Valid names are: ${allValidNames.join(', ')}`);
+        if (!allPossibleCharacterNames.includes(name)) {
+          throw new Error(`Invalid character name provided: "${name}". Valid names are: ${allPossibleCharacterNames.join(', ')}`);
         }
       }
       selectedCharacterNames = [...new Set(args.characterNames)];
-      if (selectedCharacterNames.length === 0) { // Handle case where input array was empty after Set
-        console.warn("Received empty or all-duplicate characterNames list; defaulting.");
+      if (selectedCharacterNames.length === 0) {
+        console.warn("Received empty or all-duplicate characterNames list after validation; defaulting.");
         selectedCharacterNames = ["INTP", "ENFP", "ISFP", "INTJ"];
       }
-    } else {
-      // Default characters
+    } else if (args.numRandomCharacters !== undefined && args.numRandomCharacters > 0) {
+      if (args.numRandomCharacters > allPossibleCharacterNames.length) {
+        throw new Error(`Cannot select ${args.numRandomCharacters} unique characters from a pool of ${allPossibleCharacterNames.length}. Please choose a smaller number.`);
+      }
+      if (args.numRandomCharacters <= 0) {
+        throw new Error(`Number of random characters (numRandomCharacters) must be a positive integer.`);
+      }
+      // Randomly select N unique characters
+      selectedCharacterNames = [];
+      const shuffledNames = [...allPossibleCharacterNames].sort(() => 0.5 - Math.random());
+      for (let i = 0; i < args.numRandomCharacters; i++) {
+        selectedCharacterNames.push(shuffledNames[i]);
+      }
+    }
+    else {
+      // Default characters if no specific instructions are given
       selectedCharacterNames = ["INTP", "ENFP", "ISFP", "INTJ"];
     }
 
-    // Ensure default characters are valid (this is a safeguard)
-    const allValidNames = Descriptions.map(d => d.name);
+    // Final validation for selectedCharacterNames (e.g. default ones, or if somehow logic above results in invalid)
+    // This also covers the case where default characters might become invalid if mbti_personalities.json changes.
+    const validDefaultOrSelectedNames = Descriptions.map(d => d.name); // Re-fetch in case Descriptions is dynamic (though it's not here)
     for (const name of selectedCharacterNames) {
-      if (!allValidNames.includes(name)) {
-        console.error(`Configuration error: Character name "${name}" (default or provided) is invalid! Check data/characters.ts and mbti_personalities.json.`);
-        throw new Error(`Internal configuration error: Character name "${name}" is invalid.`);
+      if (!validDefaultOrSelectedNames.includes(name)) {
+        // This primarily guards against issues with the default list or internal logic errors.
+        console.error(`Configuration error: Character name "${name}" selected for scenario is invalid! Check data_internal/characters.ts and data_internal/mbti_personalities.json.`);
+        throw new Error(`Internal configuration error: Selected character name "${name}" is invalid.`);
       }
     }
 
