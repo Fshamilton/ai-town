@@ -1,9 +1,9 @@
 import { v } from 'convex/values';
-import { internal, api } from './_generated/api'; // Added api for public mutation/action
-import { ActionCtx, MutationCtx, internalAction, internalMutation, internalQuery, action } from './_generated/server'; // Added action
-import { Descriptions, CharacterDescription } from '../../data/characters'; // Corrected path
+import { internal, api } from './_generated/api';
+import { ActionCtx, MutationCtx, internalAction, internalMutation, internalQuery, action } from './_generated/server';
+import { Descriptions, CharacterDescription } from './data_internal/characters'; // Updated path
 import { Id } from './_generated/dataModel';
-import { ENGINE_ACTION_DURATION } from '../constants'; // Import for scheduling runStep
+import { ENGINE_ACTION_DURATION } from './constants'; // Corrected path assuming constants.ts is in convex/
 
 // This internal action will handle the core logic of creating a world and populating it with characters.
 export const createWorldFromScenarioInternal = internalAction({
@@ -109,18 +109,18 @@ export const insertWorldStatusEntryMutation = internalMutation({
 export const insertMapDataMutation = internalMutation({
     args: { worldId: v.id('worlds')},
     handler: async (ctx: MutationCtx, args) => {
-        const map = await import('../../data/gentle'); // Path corrected, assuming it's a module now
+        const mapData = await import('./data_internal/mapData'); // Updated path
         await ctx.db.insert('maps', {
             worldId: args.worldId,
-            width: map.mapwidth,
-            height: map.mapheight,
-            tileSetUrl: map.tilesetpath,
-            tileSetDimX: map.tilesetpxw,
-            tileSetDimY: map.tilesetpxh,
-            tileDim: map.tiledim,
-            bgTiles: map.bgtiles,
-            objectTiles: map.objmap,
-            animatedSprites: map.animatedsprites,
+            width: mapData.mapwidth,
+            height: mapData.mapheight,
+            tileSetUrl: mapData.tilesetpath,
+            tileSetDimX: mapData.tilesetpxw,
+            tileSetDimY: mapData.tilesetpxh,
+            tileDim: mapData.tiledim,
+            bgTiles: mapData.bgtiles, // Ensure these fields exist in mapData.ts
+            objectTiles: mapData.objmap, // Ensure these fields exist in mapData.ts
+            animatedSprites: mapData.animatedsprites, // Ensure these fields exist in mapData.ts
         });
     }
 });
