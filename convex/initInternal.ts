@@ -36,7 +36,7 @@ export const setupDefaultWorld = internalMutation({
 
     // If no default worldStatus, create a new default world, engine, map, etc.
     // Assumes 'internal.aiTown.main.createEngine' is an internalMutation
-    const engineId = await ctx.run(internal.aiTown.main.createEngine, {});
+    const engineId = await ctx.runMutation(internal.aiTown.main.createEngine, {}); // Corrected: ctx.runMutation
     const engine = await ctx.db.get(engineId);
     if (!engine) {
       throw new Error(`Failed to create or retrieve engine with ID ${engineId}`);
