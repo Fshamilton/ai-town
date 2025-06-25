@@ -17,6 +17,14 @@ crons.interval('restart dead worlds', { seconds: 60 }, internal.world.restartDea
 
 crons.daily('vacuum old entries', { hourUTC: 4, minuteUTC: 20 }, internal.crons.vacuumOldEntries);
 
+// Cron job to periodically generate new topics for active worlds
+crons.interval(
+  "generateNewWorldTopics",
+  { minutes: 10 }, // Run every 10 minutes
+  internal.topicManager.triggerTopicGenerationForAllWorldsInternal,
+  // No arguments needed for triggerTopicGenerationForAllWorldsInternal as it fetches all active worlds
+);
+
 export default crons;
 
 const TablesToVacuum: TableNames[] = [

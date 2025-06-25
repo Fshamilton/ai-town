@@ -17,7 +17,7 @@ export async function startConversationMessage(
   playerId: GameId<'players'>,
   otherPlayerId: GameId<'players'>,
 ): Promise<string> {
-  const { player, otherPlayer, agent, otherAgent, lastConversation } = await ctx.runQuery(
+  const { player, otherPlayer, agent, otherAgent, lastConversation, currentGlobalTopic } = await ctx.runQuery(
     selfInternal.queryPromptData,
     {
       worldId,
@@ -44,11 +44,14 @@ export async function startConversationMessage(
   // System prompt in Chinese
   const prompt = [
     `你是 ${player.name}，你刚开始与 ${otherPlayer.name} 对话。`,
-    `请始终用中文回答。`, // Added instruction for Chinese
+    `请始终用中文回答。`,
   ];
-  prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null)); // agentPrompts will also be in Chinese
-  prompt.push(...previousConversationPrompt(otherPlayer, lastConversation)); // previousConversationPrompt in Chinese
-  prompt.push(...relatedMemoriesPrompt(memories)); // relatedMemoriesPrompt in Chinese
+  if (currentGlobalTopic) {
+    prompt.push(`当前世界的主要讨论话题是：“${currentGlobalTopic}”。请尝试围绕此话题展开或巧妙地将对话引导到这个主题上。`);
+  }
+  prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null));
+  prompt.push(...previousConversationPrompt(otherPlayer, lastConversation));
+  prompt.push(...relatedMemoriesPrompt(memories));
   if (memoryWithOtherPlayer) {
     prompt.push(
       `请确保在问候语中包含先前对话的一些细节或问题。`,
@@ -86,7 +89,7 @@ export async function continueConversationMessage(
   playerId: GameId<'players'>,
   otherPlayerId: GameId<'players'>,
 ): Promise<string> {
-  const { player, otherPlayer, conversation, agent, otherAgent } = await ctx.runQuery(
+  const { player, otherPlayer, conversation, agent, otherAgent, currentGlobalTopic } = await ctx.runQuery(
     selfInternal.queryPromptData,
     {
       worldId,
@@ -95,7 +98,7 @@ export async function continueConversationMessage(
       conversationId,
     },
   );
-  const now = new Date(); // Use local time for display
+  const now = new Date();
   const started = new Date(conversation.created);
 
   // Fetch memories related to the conversation or the other player
@@ -111,11 +114,14 @@ export async function continueConversationMessage(
     `请始终用中文回答。`,
     `对话开始于 ${started.toLocaleString('zh-CN')}. 当前时间是 ${now.toLocaleString('zh-CN')}.`,
   ];
+  if (currentGlobalTopic) {
+    prompt.push(`当前世界的主要讨论话题是：“${currentGlobalTopic}”。如果合适，请围绕此话题继续对话，或者在回应中提及它。`);
+  }
   prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null));
   prompt.push(...relatedMemoriesPrompt(memories));
   prompt.push(
     `以下是你和 ${otherPlayer.name} 当前的聊天记录。`,
-    `不要再次打招呼。不要过于频繁地使用“嘿”这个词。你的回应应该简洁，并在100个汉字以内。`, // Adjusted character limit for Chinese
+    `不要再次打招呼。不要过于频繁地使用“嘿”这个词。你的回应应该简洁，并在100个汉字以内。`,
   );
 
   const llmMessages: LLMMessage[] = [
@@ -149,13 +155,13 @@ export async function leaveConversationMessage(
   playerId: GameId<'players'>,
   otherPlayerId: GameId<'players'>,
 ): Promise<string> {
-  const { player, otherPlayer, conversation, agent, otherAgent } = await ctx.runQuery( // Corrected: removed conversation from destructuring as it's not used directly here for prompt generation but fetched by queryPromptData
+  const { player, otherPlayer, conversation, agent, otherAgent, currentGlobalTopic } = await ctx.runQuery(
     selfInternal.queryPromptData,
     {
       worldId,
       playerId,
       otherPlayerId,
-      conversationId, // Pass conversationId
+      conversationId,
     },
   );
 
@@ -165,10 +171,14 @@ export async function leaveConversationMessage(
     `请始终用中文回答。`,
     `你已经决定离开对话，并希望礼貌地告诉他们你要走了。`,
   ];
+  // Global topic is less relevant when leaving, but could be included if desired.
+  // if (currentGlobalTopic) {
+  //   prompt.push(`(当前世界话题：“${currentGlobalTopic}”)`);
+  // }
   prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null));
   prompt.push(
     `以下是你和 ${otherPlayer.name} 当前的聊天记录。`,
-    `你希望如何告诉他们你要离开？你的回应应该简洁，并在50个汉字以内。`, // Adjusted character limit
+    `你希望如何告诉他们你要离开？你的回应应该简洁，并在50个汉字以内。`,
   );
 
   const llmMessages: LLMMessage[] = [
@@ -271,10 +281,16 @@ export const queryPromptData = internalQuery({
     conversationId,
   },
   handler: async (ctx, args) => {
-    const world = await ctx.db.get(args.worldId);
+    // Fetch the world document using the existing query (or a new one if more specific fields are needed)
+    // The existing `world` variable is from `ctx.db.get(args.worldId)` which is fine if it includes `currentTopic`.
+    // Let's use the specific query we created for clarity and to ensure it's loaded.
+    const world = await ctx.runQuery(api.aiTown.world.get, { id: args.worldId });
     if (!world) {
       throw new Error(`World ${args.worldId} not found`);
     }
+    // currentTopic will be world.currentTopic?.text or undefined
+    const currentGlobalTopic = world.currentTopic?.text;
+
     const player = world.players.find((p) => p.id === args.playerId);
     if (!player) {
       throw new Error(`Player ${args.playerId} not found`);
@@ -356,13 +372,14 @@ export const queryPromptData = internalQuery({
       conversation,
       // agentDescription contains identity and plan (which are now Chinese from mbti_personalities.json via data/characters.ts)
       agent: { name: playerDescription.name, identity: agentDescription.identity, plan: agentDescription.plan, ...agent },
-      otherAgent: otherAgent && otherAgentDescription && { // Ensure otherAgentDescription is also available
+      otherAgent: otherAgent && otherAgentDescription && {
         name: otherPlayerDescription.name,
         identity: otherAgentDescription.identity,
         plan: otherAgentDescription.plan,
         ...otherAgent,
       },
       lastConversation,
+      currentGlobalTopic: currentGlobalTopic ?? null, // Add currentGlobalTopic to the return object
     };
   },
 });

@@ -18,6 +18,11 @@ export const serializedWorld = {
   players: v.array(v.object(serializedPlayer)),
   agents: v.array(v.object(serializedAgent)),
   historicalLocations: v.optional(historicalLocations),
+  // Added field for the current global topic in the world
+  currentTopic: v.optional(v.object({
+    text: v.string(),
+    setAt: v.number(), // Timestamp of when this topic was set
+  })),
 };
 export type SerializedWorld = ObjectType<typeof serializedWorld>;
 
@@ -27,11 +32,13 @@ export class World {
   players: Map<GameId<'players'>, Player>;
   agents: Map<GameId<'agents'>, Agent>;
   historicalLocations?: Map<GameId<'players'>, ArrayBuffer>;
+  currentTopic?: { text: string; setAt: number }; // Added to World class
 
   constructor(serialized: SerializedWorld) {
-    const { nextId, historicalLocations } = serialized;
+    const { nextId, historicalLocations, currentTopic } = serialized; // Added currentTopic
 
     this.nextId = nextId;
+    this.currentTopic = currentTopic; // Initialize currentTopic
     this.conversations = parseMap(serialized.conversations, Conversation, (c) => c.id);
     this.players = parseMap(serialized.players, Player, (p) => p.id);
     this.agents = parseMap(serialized.agents, Agent, (a) => a.id);
@@ -54,6 +61,7 @@ export class World {
       conversations: [...this.conversations.values()].map((c) => c.serialize()),
       players: [...this.players.values()].map((p) => p.serialize()),
       agents: [...this.agents.values()].map((a) => a.serialize()),
+      currentTopic: this.currentTopic, // Serialize currentTopic
       historicalLocations:
         this.historicalLocations &&
         [...this.historicalLocations.entries()].map(([playerId, location]) => ({
@@ -63,3 +71,14 @@ export class World {
     };
   }
 }
+
+import { query } from '../_generated/server'; // Added for query definition
+import { Doc } from '../_generated/dataModel'; // Added for Doc type
+
+// Query to get a world document by its ID.
+export const get = query({
+  args: { id: v.id('worlds') },
+  handler: async (ctx, args): Promise<Doc<'worlds'> | null> => {
+    return await ctx.db.get(args.id);
+  },
+});
