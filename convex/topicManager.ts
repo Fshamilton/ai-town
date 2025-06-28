@@ -1,5 +1,12 @@
 import { v } from 'convex/values';
-import { internalMutation, internalAction, ActionCtx, MutationCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalAction,
+  ActionCtx,
+  MutationCtx,
+  internalQuery, // Added import
+  QueryCtx       // Added import
+} from './_generated/server';
 import { api, internal } from './_generated/api';
 import { Id } from './_generated/dataModel';
 import { chatCompletion } from './util/llm'; // For LLM calls
